@@ -32,11 +32,18 @@
         const response = await fetch(url);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         state.messagesCache = await response.json();
+        state.messagesFallbackCache = state.messagesCache;
+        if (target !== "en") {
+          const fallbackUrl = CHROME_API.runtime.getURL("_locales/en/messages.json");
+          const fallbackResponse = await fetch(fallbackUrl);
+          if (fallbackResponse.ok) state.messagesFallbackCache = await fallbackResponse.json();
+        }
         state.currentLang = target;
         CHROME_API.storage.local.set({ language: target });
       } catch (error) {
         console.warn("[Tidetrace i18n] Failed to load locale", target, error);
         state.messagesCache = null;
+        state.messagesFallbackCache = null;
         state.currentLang = "zh_TW";
       }
     },
@@ -45,6 +52,9 @@
       const state = window.TT_STATE;
       if (state.messagesCache && state.messagesCache[key]) {
         return applyPlaceholders(state.messagesCache[key].message, placeholders);
+      }
+      if (state.messagesFallbackCache && state.messagesFallbackCache[key]) {
+        return applyPlaceholders(state.messagesFallbackCache[key].message, placeholders);
       }
       const fallback = CHROME_API.i18n.getMessage(key, placeholders);
       return fallback || key;

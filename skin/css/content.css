@@ -95,9 +95,12 @@
   font: inherit;
 }
 .tt-textarea { height: 84px; resize: vertical; }
+.tt-textarea-compact { height: 68px; }
 .tt-input::placeholder, .tt-textarea::placeholder { color: var(--tt-text-muted); }
 .tt-row { display: flex; gap: 8px; align-items: center; }
 .tt-row-wrap { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tt-inline-field { flex: 1; min-width: 0; color: var(--tt-text-muted); font-size: 10px; font-weight: 700; }
+.tt-inline-field span { display: block; margin-bottom: 4px; }
 .tt-btn { border: 1px solid var(--tt-border); border-radius: 7px; background: var(--tt-bg-secondary); color: var(--tt-text); padding: 7px 9px; cursor: pointer; font: inherit; font-size: 12px; font-weight: 650; }
 .tt-btn:hover { border-color: var(--tt-accent); }
 .tt-btn-primary { background: var(--tt-accent); color: #041114; border-color: var(--tt-accent); }
@@ -107,11 +110,24 @@
 .tt-note { margin: 8px 0; padding: 8px; border: 1px solid var(--tt-border); border-radius: 8px; background: rgba(69, 191, 209, 0.08); color: var(--tt-text-muted); font-size: 11px; line-height: 1.45; }
 .tt-save-status { min-height: 16px; color: var(--tt-success); font-size: 11px; }
 .tt-provider-btn.active, .tt-mode-btn.active { background: var(--tt-accent); color: #041114; border-color: var(--tt-accent); }
+.tt-guardrail-notice { min-height: 16px; margin-top: 6px; color: var(--tt-danger); font-size: 11px; line-height: 1.35; }
+.tt-dashboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.tt-stat-box { min-width: 0; padding: 8px; border: 1px solid var(--tt-border); border-radius: 7px; background: var(--tt-bg-secondary); }
+.tt-stat-box span { display: block; overflow: hidden; color: var(--tt-text-muted); font-size: 10px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.tt-stat-box strong { display: block; margin-top: 3px; color: var(--tt-text); font-size: 18px; line-height: 1; }
+.tt-rank-title { margin: 8px 0 4px; color: var(--tt-text-muted); font-size: 11px; font-weight: 700; }
+.tt-keyword-rank { border: 1px solid var(--tt-border); border-radius: 7px; background: var(--tt-bg-secondary); overflow: hidden; }
+.tt-rank-row { display: flex; justify-content: space-between; gap: 8px; padding: 7px 8px; border-bottom: 1px solid rgba(69, 191, 209, 0.14); color: var(--tt-text); font-size: 12px; }
+.tt-rank-row:last-child { border-bottom: 0; }
+.tt-rank-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tt-rank-row strong { color: var(--tt-accent); }
 
 .tt-highlight-wrapper { background: rgba(69, 191, 209, 0.12) !important; box-shadow: inset 3px 0 0 var(--tt-accent) !important; position: relative !important; z-index: 10 !important; }
 .tt-replied-wrapper { background: rgba(47, 166, 106, 0.10) !important; box-shadow: inset 3px 0 0 var(--tt-success) !important; position: relative !important; z-index: 9 !important; }
+.tt-skipped-wrapper { background: rgba(231, 102, 102, 0.06) !important; box-shadow: inset 3px 0 0 rgba(231, 102, 102, 0.42) !important; position: relative !important; z-index: 8 !important; }
 .tt-quick-reply-btn { position: absolute; top: 6px; right: 6px; z-index: 70000 !important; padding: 4px 9px; border: 1px solid var(--tt-border); border-radius: 14px; background: rgba(14, 17, 22, 0.94) !important; color: #fff; cursor: pointer; font-family: system-ui, sans-serif; font-size: 11px; line-height: 1.35; box-shadow: 0 4px 14px rgba(0,0,0,0.38); }
 .tt-replied-badge { position: absolute; top: 6px; right: 96px; z-index: 69999 !important; padding: 4px 8px; border-radius: 12px; background: var(--tt-success); color: #fff; font-family: system-ui, sans-serif; font-size: 11px; line-height: 1.35; pointer-events: none; white-space: nowrap; }
+.tt-skipped-badge { position: absolute; top: 6px; right: 6px; z-index: 69999 !important; padding: 4px 8px; border-radius: 12px; background: rgba(231, 102, 102, 0.88); color: #fff; font-family: system-ui, sans-serif; font-size: 11px; line-height: 1.35; pointer-events: none; white-space: nowrap; }
 .tt-reply-dropdown { position: absolute; top: 36px; right: 6px; z-index: 70001 !important; min-width: 230px; max-width: 300px; max-height: 360px; overflow-y: auto; border: 1px solid var(--tt-border) !important; border-radius: 8px; background: var(--tt-bg-secondary) !important; box-shadow: 0 12px 32px rgba(0,0,0,0.48) !important; }
 .tt-reply-item { padding: 9px 12px; border-bottom: 1px solid rgba(69, 191, 209, 0.16); color: var(--tt-text) !important; cursor: pointer; font-family: system-ui, sans-serif; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tt-reply-item:hover { background: var(--tt-bg-elevated) !important; color: var(--tt-accent) !important; }
@@ -119,3 +135,5 @@
 .tt-library-row { display: flex; align-items: center; gap: 5px; margin-bottom: 5px; padding: 6px; border: 1px solid var(--tt-border); border-radius: 7px; background: var(--tt-bg-secondary); }
 .tt-library-text { flex: 1; min-width: 0; overflow: hidden; color: var(--tt-text); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .tt-mini-btn { flex-shrink: 0; border: 1px solid var(--tt-border); border-radius: 5px; background: var(--tt-bg-elevated); color: var(--tt-text-muted); padding: 3px 7px; cursor: pointer; font-size: 11px; }
+.tt-throttle-toast { position: fixed; top: 18px; right: 84px; z-index: 2147483647; max-width: 320px; padding: 10px 12px; border: 1px solid rgba(231, 102, 102, 0.55); border-radius: 8px; background: var(--tt-bg-secondary); color: var(--tt-text); box-shadow: 0 12px 32px var(--tt-shadow); font-family: system-ui, sans-serif; font-size: 12px; line-height: 1.45; }
+.tt-throttle-toast[hidden] { display: none; }

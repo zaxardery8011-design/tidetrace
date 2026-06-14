@@ -4,7 +4,11 @@
   const CHROME_API = typeof browser !== "undefined" ? browser : chrome;
   const s = () => window.TT_STATE;
   const q = () => window.TT_SELECTORS;
+  const MINUTE_MS = 60 * 1000;
+  const DEFAULT_THROTTLE_WINDOW_MINUTES = 10;
+  const DEFAULT_THROTTLE_THRESHOLD = 15;
   let shortPhrases = [];
+  let throttleNoticeTimer = null;
 
   function t(key, placeholders = null) {
     return window.TT_Content.t(key, placeholders);
@@ -15,6 +19,37 @@
     return lang && lang.startsWith("zh")
       ? [...window.TT_DEFAULT_REPLY_TEMPLATES.zh_TW]
       : [...window.TT_DEFAULT_REPLY_TEMPLATES.en];
+  }
+
+  function defaultPatrolStats() {
+    return {
+      ...window.TT_DEFAULT_PATROL_STATS,
+      keywordHits: {}
+    };
+  }
+
+  function normalizeKeywords(value) {
+    if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
+    return String(value || "").split("\n").map((line) => line.trim()).filter(Boolean);
+  }
+
+  function parsePositiveInteger(value, fallback) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  function normalizePatrolStats(value) {
+    const base = defaultPatrolStats();
+    if (!value || typeof value !== "object") return base;
+    return {
+      scannedPosts: Math.max(0, Number(value.scannedPosts) || 0),
+      highlightedPosts: Math.max(0, Number(value.highlightedPosts) || 0),
+      repliedPosts: Math.max(0, Number(value.repliedPosts) || 0),
+      skippedPosts: Math.max(0, Number(value.skippedPosts) || 0),
+      keywordHits: value.keywordHits && typeof value.keywordHits === "object"
+        ? Object.fromEntries(Object.entries(value.keywordHits).map(([key, count]) => [key, Math.max(0, Number(count) || 0)]))
+        : {}
+    };
   }
 
   async function loadDictionary() {
@@ -35,9 +70,14 @@
   function loadPatrolData() {
     CHROME_API.storage.local.get([
       "patrolKeywords",
+      "dangerKeywords",
       "replyTemplates",
       "repliedPostIds",
-      "replyMode"
+      "replyMode",
+      "interactionThrottleWindowMinutes",
+      "interactionThrottleThreshold",
+      "replyInteractionTimestamps",
+      "patrolStats"
     ], (result) => {
       const state = s();
 
@@ -45,6 +85,10 @@
         state.highlightKeywords = result.patrolKeywords;
         const textarea = document.getElementById("tt-keyword-textarea");
         if (textarea) textarea.value = state.highlightKeywords.join("\n");
+      }
+
+      if (Array.isArray(result.dangerKeywords)) {
+        state.dangerKeywords = result.dangerKeywords;
       }
 
       if (Array.isArray(result.replyTemplates)) {
@@ -62,13 +106,220 @@
         state.replyMode = result.replyMode;
       }
 
+      state.interactionThrottleWindowMinutes = parsePositiveInteger(
+        result.interactionThrottleWindowMinutes,
+        DEFAULT_THROTTLE_WINDOW_MINUTES
+      );
+      state.interactionThrottleThreshold = parsePositiveInteger(
+        result.interactionThrottleThreshold,
+        DEFAULT_THROTTLE_THRESHOLD
+      );
+      state.replyInteractionTimestamps = Array.isArray(result.replyInteractionTimestamps)
+        ? result.replyInteractionTimestamps.filter((timestamp) => Number.isFinite(Number(timestamp))).map(Number)
+        : [];
+      state.patrolStats = normalizePatrolStats(result.patrolStats);
+
+      renderGuardrailSettings();
       renderReplyLibrary();
+      renderDashboard();
       updateReplyModeUI();
     });
   }
 
   function savePatrolKeywords() {
     CHROME_API.storage.local.set({ patrolKeywords: s().highlightKeywords });
+  }
+
+  function savePatrolStats() {
+    CHROME_API.storage.local.set({ patrolStats: s().patrolStats });
+  }
+
+  function collectGuardrailInputs() {
+    const state = s();
+    const dangerTextarea = document.getElementById("tt-danger-keyword-textarea");
+    const windowInput = document.getElementById("tt-throttle-window-input");
+    const thresholdInput = document.getElementById("tt-throttle-threshold-input");
+
+    if (dangerTextarea) state.dangerKeywords = normalizeKeywords(dangerTextarea.value);
+    state.interactionThrottleWindowMinutes = parsePositiveInteger(
+      windowInput ? windowInput.value : state.interactionThrottleWindowMinutes,
+      DEFAULT_THROTTLE_WINDOW_MINUTES
+    );
+    state.interactionThrottleThreshold = parsePositiveInteger(
+      thresholdInput ? thresholdInput.value : state.interactionThrottleThreshold,
+      DEFAULT_THROTTLE_THRESHOLD
+    );
+
+    if (windowInput) windowInput.value = String(state.interactionThrottleWindowMinutes);
+    if (thresholdInput) thresholdInput.value = String(state.interactionThrottleThreshold);
+  }
+
+  function renderGuardrailSettings() {
+    const state = s();
+    const dangerTextarea = document.getElementById("tt-danger-keyword-textarea");
+    const windowInput = document.getElementById("tt-throttle-window-input");
+    const thresholdInput = document.getElementById("tt-throttle-threshold-input");
+
+    if (dangerTextarea) dangerTextarea.value = state.dangerKeywords.join("\n");
+    if (windowInput) windowInput.value = String(state.interactionThrottleWindowMinutes);
+    if (thresholdInput) thresholdInput.value = String(state.interactionThrottleThreshold);
+  }
+
+  function saveGuardrailSettings(showStatus = true) {
+    collectGuardrailInputs();
+    const state = s();
+    CHROME_API.storage.local.set({
+      dangerKeywords: state.dangerKeywords,
+      interactionThrottleWindowMinutes: state.interactionThrottleWindowMinutes,
+      interactionThrottleThreshold: state.interactionThrottleThreshold
+    }, () => {
+      if (!showStatus) return;
+      const status = document.getElementById("tt-guardrail-save-status");
+      if (!status) return;
+      status.textContent = t("saveSuccess");
+      setTimeout(() => { status.textContent = ""; }, 1800);
+    });
+    if (state.isHighlighting) scanAllPosts();
+  }
+
+  function renderDashboard() {
+    const stats = s().patrolStats || defaultPatrolStats();
+    const values = {
+      "tt-stat-scanned": stats.scannedPosts,
+      "tt-stat-highlighted": stats.highlightedPosts,
+      "tt-stat-replied": stats.repliedPosts,
+      "tt-stat-skipped": stats.skippedPosts
+    };
+
+    Object.entries(values).forEach(([id, value]) => {
+      const element = document.getElementById(id);
+      if (element) element.textContent = String(value);
+    });
+
+    const rank = document.getElementById("tt-keyword-rank");
+    if (!rank) return;
+    rank.innerHTML = "";
+
+    const entries = Object.entries(stats.keywordHits || {})
+      .filter(([, count]) => count > 0)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+
+    if (entries.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "tt-reply-empty";
+      empty.textContent = t("keywordRankEmpty");
+      rank.appendChild(empty);
+      return;
+    }
+
+    entries.forEach(([keyword, count]) => {
+      const row = document.createElement("div");
+      row.className = "tt-rank-row";
+
+      const label = document.createElement("span");
+      label.textContent = keyword;
+
+      const value = document.createElement("strong");
+      value.textContent = String(count);
+
+      row.append(label, value);
+      rank.appendChild(row);
+    });
+  }
+
+  function resetPatrolStats() {
+    if (!confirm(t("confirmResetStats"))) return;
+    s().patrolStats = defaultPatrolStats();
+    savePatrolStats();
+    renderDashboard();
+  }
+
+  function recordScannedArticle(article) {
+    if (article.dataset.ttScanned === "1") return;
+    article.dataset.ttScanned = "1";
+    const stats = s().patrolStats;
+    stats.scannedPosts += 1;
+    savePatrolStats();
+    renderDashboard();
+  }
+
+  function recordSkippedArticle(article) {
+    if (article.dataset.ttSkippedStat === "1") return;
+    article.dataset.ttSkippedStat = "1";
+    const stats = s().patrolStats;
+    stats.skippedPosts += 1;
+    savePatrolStats();
+    renderDashboard();
+  }
+
+  function recordHighlightedArticle(article, matchedKeywords) {
+    if (article.dataset.ttHighlightedStat === "1") return;
+    article.dataset.ttHighlightedStat = "1";
+    const stats = s().patrolStats;
+    stats.highlightedPosts += 1;
+    matchedKeywords.forEach((keyword) => {
+      stats.keywordHits[keyword] = (stats.keywordHits[keyword] || 0) + 1;
+    });
+    savePatrolStats();
+    renderDashboard();
+  }
+
+  function recordRepliedArticle() {
+    const stats = s().patrolStats;
+    stats.repliedPosts += 1;
+    savePatrolStats();
+    renderDashboard();
+  }
+
+  function showThrottleNotice(count) {
+    const state = s();
+    const message = t("throttleWarning", [
+      String(state.interactionThrottleWindowMinutes),
+      String(count),
+      String(state.interactionThrottleThreshold)
+    ]);
+
+    const panelNotice = document.getElementById("tt-guardrail-notice");
+    if (panelNotice) panelNotice.textContent = message;
+
+    let toast = document.getElementById("tt-throttle-toast");
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.id = "tt-throttle-toast";
+      toast.className = "tt-throttle-toast";
+      document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.hidden = false;
+
+    clearTimeout(throttleNoticeTimer);
+    throttleNoticeTimer = setTimeout(() => {
+      toast.hidden = true;
+    }, 5200);
+  }
+
+  function recordReplyInteraction() {
+    const state = s();
+    const now = Date.now();
+    const windowMs = state.interactionThrottleWindowMinutes * MINUTE_MS;
+
+    CHROME_API.storage.local.get(["replyInteractionTimestamps"], (result) => {
+      const stored = Array.isArray(result.replyInteractionTimestamps)
+        ? result.replyInteractionTimestamps
+        : state.replyInteractionTimestamps;
+      const recent = stored
+        .map(Number)
+        .filter((timestamp) => Number.isFinite(timestamp) && now - timestamp <= windowMs);
+
+      recent.push(now);
+      state.replyInteractionTimestamps = recent;
+      CHROME_API.storage.local.set({ replyInteractionTimestamps: recent });
+
+      if (recent.length >= state.interactionThrottleThreshold) {
+        showThrottleNotice(recent.length);
+      }
+    });
   }
 
   function saveReplyTemplates() {
@@ -174,15 +425,54 @@
     return null;
   }
 
+  function matchedKeywords(text, keywords) {
+    const loweredText = text.toLowerCase();
+    return keywords.filter((keyword) => keyword && loweredText.includes(keyword.toLowerCase()));
+  }
+
+  function removeArticleControls(article) {
+    article.querySelectorAll(".tt-quick-reply-btn, .tt-reply-dropdown, .tt-replied-badge").forEach((element) => {
+      element.remove();
+    });
+  }
+
+  function clearSkippedMarker(article) {
+    article.classList.remove("tt-skipped-wrapper");
+    article.querySelectorAll(".tt-skipped-badge").forEach((element) => element.remove());
+  }
+
+  function ensureSkippedBadge(article) {
+    if (article.querySelector(".tt-skipped-badge")) return;
+    const badge = document.createElement("div");
+    badge.className = "tt-skipped-badge";
+    badge.textContent = t("skippedBadge");
+    article.appendChild(badge);
+  }
+
+  function markAsSkipped(article) {
+    article.classList.remove("tt-highlight-wrapper", "tt-replied-wrapper");
+    article.classList.add("tt-skipped-wrapper");
+    removeArticleControls(article);
+    ensureSkippedBadge(article);
+    recordSkippedArticle(article);
+  }
+
   function checkAndHighlight(article) {
     const state = s();
     if (!state.isHighlighting || state.highlightKeywords.length === 0) return;
 
     const text = (article.innerText || article.textContent || "").toLowerCase();
-    const hasMatch = state.highlightKeywords.some((keyword) => {
-      return keyword && text.includes(keyword.toLowerCase());
-    });
-    if (!hasMatch) return;
+    recordScannedArticle(article);
+
+    if (matchedKeywords(text, state.dangerKeywords).length > 0) {
+      markAsSkipped(article);
+      return;
+    }
+
+    clearSkippedMarker(article);
+
+    const keywordMatches = matchedKeywords(text, state.highlightKeywords);
+    if (keywordMatches.length === 0) return;
 
     const postId = getArticlePostId(article);
     const alreadyCounted = article.classList.contains("tt-highlight-wrapper") ||
@@ -197,7 +487,10 @@
       article.classList.remove("tt-replied-wrapper");
     }
 
-    if (!alreadyCounted) state.highlightCount += 1;
+    if (!alreadyCounted) {
+      state.highlightCount += 1;
+      recordHighlightedArticle(article, keywordMatches);
+    }
     injectQuickReplyButton(article, postId);
   }
 
@@ -222,6 +515,7 @@
   function startHighlight() {
     const state = s();
     loadDictionary();
+    saveGuardrailSettings(false);
 
     const textarea = document.getElementById("tt-keyword-textarea");
     if (!textarea) return;
@@ -235,6 +529,7 @@
     state.isHighlighting = true;
     state.highlightCount = 0;
     savePatrolKeywords();
+    renderDashboard();
 
     const startButton = document.getElementById("tt-patrol-start");
     const stopButton = document.getElementById("tt-patrol-stop");
@@ -274,10 +569,10 @@
       state.highlightObserver = null;
     }
 
-    document.querySelectorAll(".tt-highlight-wrapper, .tt-replied-wrapper").forEach((element) => {
-      element.classList.remove("tt-highlight-wrapper", "tt-replied-wrapper");
+    document.querySelectorAll(".tt-highlight-wrapper, .tt-replied-wrapper, .tt-skipped-wrapper").forEach((element) => {
+      element.classList.remove("tt-highlight-wrapper", "tt-replied-wrapper", "tt-skipped-wrapper");
     });
-    document.querySelectorAll(".tt-quick-reply-btn, .tt-reply-dropdown, .tt-replied-badge").forEach((element) => {
+    document.querySelectorAll(".tt-quick-reply-btn, .tt-reply-dropdown, .tt-replied-badge, .tt-skipped-badge").forEach((element) => {
       element.remove();
     });
 
@@ -548,9 +843,12 @@
       s().repliedPostIds.add(postId);
       saveRepliedPost(postId);
     }
-    article.classList.remove("tt-highlight-wrapper");
+    article.classList.remove("tt-highlight-wrapper", "tt-skipped-wrapper");
+    article.querySelectorAll(".tt-skipped-badge").forEach((element) => element.remove());
     article.classList.add("tt-replied-wrapper");
     ensureRepliedBadge(article);
+    recordRepliedArticle();
+    recordReplyInteraction();
   }
 
   function clearRepliedMarkers() {
@@ -637,6 +935,8 @@
     document.getElementById("tt-patrol-start")?.addEventListener("click", startHighlight);
     document.getElementById("tt-patrol-stop")?.addEventListener("click", stopHighlight);
     document.getElementById("tt-clear-markers")?.addEventListener("click", clearRepliedMarkers);
+    document.getElementById("tt-save-guardrails")?.addEventListener("click", () => saveGuardrailSettings(true));
+    document.getElementById("tt-reset-stats")?.addEventListener("click", resetPatrolStats);
 
     document.querySelectorAll("[data-reply-mode]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -684,6 +984,38 @@
       </div>
       <div id="tt-patrol-status" class="tt-status">${t("statusPatrolOff")}</div>
 
+      <label class="tt-field-label">${t("guardrailHeader")}</label>
+      <div class="tt-note">${t("guardrailNote")}</div>
+      <textarea id="tt-danger-keyword-textarea" class="tt-textarea tt-textarea-compact" placeholder="${t("dangerKeywordPlaceholder")}"></textarea>
+      <div class="tt-row" style="margin-top:8px;">
+        <label class="tt-inline-field">
+          <span>${t("throttleWindowLabel")}</span>
+          <input id="tt-throttle-window-input" class="tt-input" type="number" min="1" value="10">
+        </label>
+        <label class="tt-inline-field">
+          <span>${t("throttleThresholdLabel")}</span>
+          <input id="tt-throttle-threshold-input" class="tt-input" type="number" min="1" value="15">
+        </label>
+      </div>
+      <div class="tt-row" style="margin-top:8px;">
+        <button id="tt-save-guardrails" class="tt-btn tt-btn-primary" type="button">${t("btnSaveGuardrails")}</button>
+        <span id="tt-guardrail-save-status" class="tt-save-status"></span>
+      </div>
+      <div id="tt-guardrail-notice" class="tt-guardrail-notice" aria-live="polite"></div>
+
+      <label class="tt-field-label">${t("dashboardHeader")}</label>
+      <div class="tt-dashboard-grid">
+        <div class="tt-stat-box"><span>${t("statScanned")}</span><strong id="tt-stat-scanned">0</strong></div>
+        <div class="tt-stat-box"><span>${t("statHighlighted")}</span><strong id="tt-stat-highlighted">0</strong></div>
+        <div class="tt-stat-box"><span>${t("statReplied")}</span><strong id="tt-stat-replied">0</strong></div>
+        <div class="tt-stat-box"><span>${t("statSkipped")}</span><strong id="tt-stat-skipped">0</strong></div>
+      </div>
+      <div class="tt-rank-title">${t("keywordRankLabel")}</div>
+      <div id="tt-keyword-rank" class="tt-keyword-rank"></div>
+      <div class="tt-row" style="margin-top:8px;">
+        <button id="tt-reset-stats" class="tt-btn tt-btn-danger" type="button" style="flex:1;">${t("btnResetStats")}</button>
+      </div>
+
       <label class="tt-field-label">${t("replyModeLabel")}</label>
       <div class="tt-row">
         <button class="tt-btn tt-mode-btn" data-reply-mode="copy" type="button" style="flex:1;">${t("modeCopy")}</button>
@@ -726,6 +1058,9 @@
     initUI,
     loadPatrolData,
     savePatrolKeywords,
+    saveGuardrailSettings,
+    renderDashboard,
+    resetPatrolStats,
     saveReplyTemplates,
     saveReplyMode,
     saveRepliedPost,

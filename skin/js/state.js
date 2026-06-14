@@ -18,18 +18,33 @@
     ]
   };
 
+  const DEFAULT_PATROL_STATS = {
+    scannedPosts: 0,
+    highlightedPosts: 0,
+    repliedPosts: 0,
+    skippedPosts: 0,
+    keywordHits: {}
+  };
+
   window.TT_DEFAULT_REPLY_TEMPLATES = DEFAULT_REPLY_TEMPLATES;
+  window.TT_DEFAULT_PATROL_STATS = DEFAULT_PATROL_STATS;
 
   window.TT_STATE = {
     currentLang: "zh_TW",
     messagesCache: null,
+    messagesFallbackCache: null,
     highlightObserver: null,
     isHighlighting: false,
     highlightKeywords: [],
+    dangerKeywords: [],
     highlightCount: 0,
     repliedPostIds: new Set(),
     replyTemplates: [],
     replyMode: "autofill",
+    interactionThrottleWindowMinutes: 10,
+    interactionThrottleThreshold: 15,
+    replyInteractionTimestamps: [],
+    patrolStats: { ...DEFAULT_PATROL_STATS, keywordHits: {} },
     aiProvider: "gemini",
     aiApiKeys: {
       gemini: "",
